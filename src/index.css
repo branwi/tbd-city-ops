@@ -12,6 +12,17 @@
   }
 }
 
+/* Darken OSM tiles to match the dark slate theme */
+.leaflet-tile-pane {
+  filter: brightness(0.5) saturate(0.2) hue-rotate(195deg);
+}
+
+/* Bring markers above the darkened tile layer */
+.leaflet-marker-pane,
+.leaflet-overlay-pane {
+  filter: none;
+}
+
 @layer components {
   .badge-high {
     @apply bg-red-900/50 text-red-300 border border-red-700/50;

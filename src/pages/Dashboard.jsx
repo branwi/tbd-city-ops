@@ -1,114 +1,178 @@
-import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabaseClient'
+import { useState } from 'react'
+import { useIncidents } from '../hooks/useIncidents'
+import { useClusters } from '../hooks/useClusters'
+import { IncidentMap } from '../components/map/IncidentMap'
+import { IncidentFilters } from '../components/incidents/IncidentFilters'
+import { IncidentList } from '../components/incidents/IncidentList'
+import { IncidentDetailPanel } from '../components/incidents/IncidentDetailPanel'
+import { ClusterDetailPanel } from '../components/incidents/ClusterDetailPanel'
+import { TriageQueue } from '../components/incidents/TriageQueue'
+
+const DEFAULT_FILTERS = {
+  incident_type:  null,
+  priority_label: null,
+  status:         null,
+  source_type:    null,
+}
 
 export function Dashboard() {
-  const [connectionStatus, setConnectionStatus] = useState('checking')
-  const [incidentCount, setIncidentCount] = useState(null)
-  const [error, setError] = useState(null)
+  const [filters,         setFilters]         = useState(DEFAULT_FILTERS)
+  const [selectedId,      setSelectedId]      = useState(null)
+  const [selectedCluster, setSelectedCluster] = useState(null)
+  const [refreshKey,      setRefreshKey]      = useState(0)
 
-  useEffect(() => {
-    async function testConnection() {
-      // Query the incidents table — returns 0 rows (table may not exist yet)
-      // but confirms the Supabase connection is live.
-      const { count, error } = await supabase
-        .from('incidents')
-        .select('*', { count: 'exact', head: true })
+  const { incidents, loading, error } = useIncidents(filters, refreshKey)
+  const { clusters }                  = useClusters(refreshKey)
 
-      if (error) {
-        // "relation does not exist" means connected but table not created yet (Phase 2)
-        if (error.code === '42P01') {
-          setConnectionStatus('connected')
-          setIncidentCount(0)
-        } else {
-          setConnectionStatus('error')
-          setError(error.message)
-        }
-      } else {
-        setConnectionStatus('connected')
-        setIncidentCount(count ?? 0)
-      }
-    }
+  function selectIncident(id) {
+    setSelectedId(id)
+    setSelectedCluster(null)
+  }
 
-    testConnection()
-  }, [])
+  function selectCluster(id) {
+    setSelectedCluster(id)
+    setSelectedId(null)
+  }
+
+  function closePanel() {
+    setSelectedId(null)
+    setSelectedCluster(null)
+  }
+
+  function handleReset() {
+    setFilters(DEFAULT_FILTERS)
+    setSelectedId(null)
+    setSelectedCluster(null)
+    setRefreshKey((k) => k + 1)
+  }
+
+  function handleStatusUpdate() {
+    setRefreshKey((k) => k + 1)
+  }
+
+  const highCount   = incidents.filter((i) => i.priority_label === 'high').length
+  const medCount    = incidents.filter((i) => i.priority_label === 'medium').length
+  const lowCount    = incidents.filter((i) => i.priority_label === 'low').length
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="bg-slate-900 border border-red-700/40 rounded-xl p-6 max-w-md">
+          <p className="text-red-400 font-medium mb-2">Connection error</p>
+          <p className="text-xs text-red-400 font-mono break-all">{error}</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-8 p-8">
-      {/* Connection status card */}
-      <div className="w-full max-w-md bg-slate-900 border border-slate-700/50 rounded-xl p-6 space-y-4">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-          Supabase Connection
-        </h2>
+    <div className="flex h-full">
+      {/* Left: filter sidebar */}
+      <IncidentFilters
+        filters={filters}
+        onChange={setFilters}
+        totalCount={incidents.length}
+      />
 
-        {connectionStatus === 'checking' && (
-          <div className="flex items-center gap-3">
-            <div className="w-3 h-3 rounded-full bg-amber-400 animate-pulse" />
-            <span className="text-slate-300">Connecting…</span>
+      {/* Center: stats bar + triage bar + map + list */}
+      <div className="flex flex-col flex-1 min-w-0">
+        {/* Stats + reset bar */}
+        <div className="flex items-center justify-between px-4 py-2 bg-slate-900
+                        border-b border-slate-800 shrink-0">
+          <div className="flex items-center gap-4 text-xs">
+            <span className="text-slate-500">
+              Total{' '}
+              <span className="text-slate-200 font-mono font-semibold">
+                {loading ? '…' : incidents.length}
+              </span>
+            </span>
+            <span className="text-red-400">
+              High <span className="font-mono font-semibold">{loading ? '…' : highCount}</span>
+            </span>
+            <span className="text-amber-400">
+              Med <span className="font-mono font-semibold">{loading ? '…' : medCount}</span>
+            </span>
+            <span className="text-green-400">
+              Low <span className="font-mono font-semibold">{loading ? '…' : lowCount}</span>
+            </span>
           </div>
-        )}
+          <button
+            onClick={handleReset}
+            title="Reset all filters and refresh data"
+            className="text-xs text-slate-500 hover:text-slate-200 transition-colors
+                       flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-800"
+          >
+            ↺ Reset
+          </button>
+        </div>
 
-        {connectionStatus === 'connected' && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="w-3 h-3 rounded-full bg-green-400" />
-              <span className="text-green-300 font-medium">Connected</span>
-            </div>
-            <div className="text-slate-400 text-sm font-mono">
-              incidents in database:{' '}
-              <span className="text-slate-200 font-semibold">{incidentCount}</span>
-            </div>
-            {incidentCount === 0 && (
-              <p className="text-xs text-slate-500">
-                Table not created yet — that's Phase 2. Connection is working.
-              </p>
-            )}
-          </div>
-        )}
+        <TriageQueue incidents={incidents} onJumpToNext={selectIncident} />
 
-        {connectionStatus === 'error' && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-3">
-              <div className="w-3 h-3 rounded-full bg-red-400" />
-              <span className="text-red-300 font-medium">Connection failed</span>
+        {/* Map */}
+        <div className="h-[400px] shrink-0 relative">
+          {loading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center
+                            bg-slate-950/60 backdrop-blur-sm">
+              <div className="flex items-center gap-2 text-slate-400 text-sm">
+                <div className="w-3 h-3 rounded-full bg-amber-400 animate-pulse" />
+                Loading map…
+              </div>
             </div>
-            <p className="text-xs text-red-400 font-mono break-all">{error}</p>
-            <p className="text-xs text-slate-500">
-              Check that <code className="text-slate-300">.env.local</code> has the correct{' '}
-              <code className="text-slate-300">VITE_SUPABASE_URL</code> and{' '}
-              <code className="text-slate-300">VITE_SUPABASE_ANON_KEY</code>.
+          )}
+          <IncidentMap
+            incidents={incidents}
+            clusters={clusters}
+            selectedId={selectedId}
+            selectedClusterId={selectedCluster}
+            onSelect={selectIncident}
+            onSelectCluster={selectCluster}
+          />
+        </div>
+
+        {/* Zoom hint */}
+        {clusters.length > 0 && (
+          <div className="px-4 py-1 bg-slate-900/80 border-b border-slate-800 shrink-0">
+            <p className="text-xs text-slate-600">
+              Zoom past level 13 to see individual markers · {clusters.length} clusters loaded
             </p>
           </div>
         )}
+
+        {/* Incident list */}
+        <div className="flex-1 overflow-y-auto border-t border-slate-800 bg-slate-950">
+          <div className="sticky top-0 z-10 px-4 py-2 bg-slate-900/90 backdrop-blur-sm
+                          border-b border-slate-800 flex items-center justify-between">
+            <p className="text-xs uppercase tracking-widest text-slate-500">Incidents</p>
+            <p className="text-xs text-slate-600 font-mono">
+              {loading ? '…' : `${incidents.length} shown`}
+            </p>
+          </div>
+          <IncidentList
+            incidents={incidents}
+            loading={loading}
+            selectedId={selectedId}
+            onSelect={selectIncident}
+          />
+        </div>
       </div>
 
-      {/* Phase roadmap placeholder */}
-      <div className="w-full max-w-md bg-slate-900 border border-slate-700/50 rounded-xl p-6 space-y-3">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-          Build Progress
-        </h2>
-        <ul className="space-y-2 text-sm">
-          {[
-            { phase: 'Phase 1', label: 'Foundation', done: true },
-            { phase: 'Phase 2', label: 'Data Model & Sample Data', done: false },
-            { phase: 'Phase 3', label: 'Map Dashboard', done: false },
-            { phase: 'Phase 4', label: 'Detail Panel & Review Workflow', done: false },
-            { phase: 'Phase 5', label: 'Clustering & Deduplication', done: false },
-            { phase: 'Phase 6', label: 'AI Classification', done: false },
-            { phase: 'Phase 7', label: 'Portfolio Polish', done: false },
-          ].map(({ phase, label, done }) => (
-            <li key={phase} className="flex items-center gap-3">
-              <span className={`w-4 h-4 rounded text-xs flex items-center justify-center font-bold
-                ${done ? 'bg-green-900/60 text-green-400' : 'bg-slate-800 text-slate-600'}`}>
-                {done ? '✓' : '·'}
-              </span>
-              <span className={done ? 'text-green-300' : 'text-slate-500'}>
-                <span className="text-slate-400 font-mono text-xs mr-2">{phase}</span>
-                {label}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
+      {/* Right: incident detail panel */}
+      {selectedId && (
+        <IncidentDetailPanel
+          id={selectedId}
+          onClose={closePanel}
+          onStatusUpdate={handleStatusUpdate}
+        />
+      )}
+
+      {/* Right: cluster detail panel */}
+      {selectedCluster && !selectedId && (
+        <ClusterDetailPanel
+          clusterId={selectedCluster}
+          onClose={closePanel}
+          onSelectIncident={selectIncident}
+        />
+      )}
     </div>
   )
 }
